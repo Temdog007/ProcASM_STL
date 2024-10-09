@@ -21,8 +21,163 @@
 
 #include <stdlib.h>
 
+#include <memory>
+
 #include "stl.h"
 
+struct Deleter
+{
+    void operator()(struct addrinfo *ptr)
+    {
+        freeaddrinfo(ptr);
+    }
+    void operator()(FILE *file)
+    {
+        if (file != nullptr)
+        {
+            fclose(file);
+        }
+    }
+};
+
+// Start Printing
+int32_t printAscii(const char *string, int32_t length)
+{
+    return printf("%.*s\n", length, string);
+}
+
+static inline size_t ProcASM_utf32_to_utf8(uint8_t *const buffer, const unsigned int code)
+{
+    if (code <= 0x7F)
+    {
+        buffer[0] = code;
+        return 1;
+    }
+    if (code <= 0x7FF)
+    {
+        buffer[0] = 0xC0 | (code >> 6);   /* 110xxxxx */
+        buffer[1] = 0x80 | (code & 0x3F); /* 10xxxxxx */
+        return 2;
+    }
+    if (code <= 0xFFFF)
+    {
+        buffer[0] = 0xE0 | (code >> 12);         /* 1110xxxx */
+        buffer[1] = 0x80 | ((code >> 6) & 0x3F); /* 10xxxxxx */
+        buffer[2] = 0x80 | (code & 0x3F);        /* 10xxxxxx */
+        return 3;
+    }
+    if (code <= 0x10FFFF)
+    {
+        buffer[0] = 0xF0 | (code >> 18);          /* 11110xxx */
+        buffer[1] = 0x80 | ((code >> 12) & 0x3F); /* 10xxxxxx */
+        buffer[2] = 0x80 | ((code >> 6) & 0x3F);  /* 10xxxxxx */
+        buffer[3] = 0x80 | (code & 0x3F);         /* 10xxxxxx */
+        return 4;
+    }
+    return 0;
+}
+
+int32_t printUTF32(const char32_t *string, size_t length)
+{
+    int total = 0;
+    for (size_t i = 0; i < length; ++i)
+    {
+        char buffer[5];
+        const size_t size = ProcASM_utf32_to_utf8((uint8_t *)buffer, string[i]);
+        buffer[size] = '\0';
+        total += printf("%s", buffer);
+    }
+    return total;
+}
+// End Printing
+
+// Start File
+using File = std::unique_ptr<FILE, Deleter>;
+static inline File openFile(const char *string, size_t length, const char *flags)
+{
+    if (length > 255)
+    {
+        length = 255;
+    }
+    char filename[256];
+    memcpy(filename, string, sizeof(char) * (length - 1));
+    filename[length] = '\0';
+    FILE *file = fopen(filename, flags);
+    if (file == nullptr)
+    {
+        perror("fopen");
+        return nullptr;
+    }
+    return File(file);
+}
+
+int32_t checkIfFileExists(const char *filename, size_t filenameLength)
+{
+    return openFile(filename, filenameLength, "r") != nullptr;
+}
+
+size_t readTextFile(const char *filename, size_t filenameLength, char *buffer, size_t length)
+{
+    File file = openFile(filename, filenameLength, "r");
+    if (file == nullptr)
+    {
+        return 0;
+    }
+    return fread(buffer, sizeof(char), length, file.get());
+}
+
+size_t readBinaryFile(const char *filename, size_t filenameLength, uint8_t *buffer, size_t length)
+{
+    File file = openFile(filename, filenameLength, "rb");
+    if (file == nullptr)
+    {
+        return 0;
+    }
+    return fread(buffer, sizeof(char), length, file.get());
+}
+
+size_t writeTextFile(const char *filename, size_t filenameLength, const char *buffer, size_t length)
+{
+    File file = openFile(filename, filenameLength, "w");
+    if (file == nullptr)
+    {
+        return 0;
+    }
+    return fwrite(buffer, sizeof(char), length, file.get());
+}
+
+size_t writeBinaryFile(const char *filename, size_t filenameLength, const uint8_t *buffer, size_t length)
+{
+    File file = openFile(filename, filenameLength, "wb");
+    if (file == nullptr)
+    {
+        return 0;
+    }
+    return fwrite(buffer, sizeof(uint8_t), length, file.get());
+}
+
+size_t appendTextToFile(const char *filename, size_t filenameLength, const char *buffer, size_t length)
+{
+    File file = openFile(filename, filenameLength, "w+");
+    if (file == nullptr)
+    {
+        return 0;
+    }
+    return fwrite(buffer, sizeof(char), length, file.get());
+}
+
+size_t appendBinaryToFile(const char *filename, size_t filenameLength, const uint8_t *buffer, size_t length)
+{
+    File file = openFile(filename, filenameLength, "wb+");
+    if (file == nullptr)
+    {
+        return 0;
+    }
+    return fwrite(buffer, sizeof(uint8_t), length, file.get());
+}
+// End File
+
+// Start Networking
 #if _WIN32
 #define MSG_NOSIGNAL 0
 #else
@@ -39,16 +194,7 @@ constexpr bool validSocket(SOCKET sockfd) noexcept
 #endif
 }
 
-#include <memory>
-
-struct AddrInfoDeleter
-{
-    void operator()(struct addrinfo *ptr)
-    {
-        freeaddrinfo(ptr);
-    }
-};
-using AddrInfo = std::unique_ptr<struct addrinfo, AddrInfoDeleter>;
+using AddrInfo = std::unique_ptr<struct addrinfo, Deleter>;
 
 inline void *get_in_addr(struct sockaddr *sa)
 {
@@ -244,9 +390,12 @@ void closeSocket(void *ptr)
     SOCKET sockfd = static_cast<SOCKET>(addr);
     closeSocket(sockfd);
 }
+// End Network
 
+// Start Other
 int32_t readEnvironmentVariable(const char *key, char *buffer, size_t length)
 {
     const char *value = getenv(key);
     return snprintf(buffer, length, "%s", value);
 }
+// End Other
