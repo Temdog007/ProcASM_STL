@@ -56,6 +56,11 @@ extern "C"
 
     // Start Other
     API int32_t readEnvironmentVariable(const char *, char *, size_t);
+    API int32_t getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds);
+    API int32_t sleepInSecondsAndNanoseconds(size_t, size_t);
+    API int32_t sleepInSeconds(size_t);
+    API int32_t sleepInMilliseconds(size_t);
+    API int32_t sleepInMicroseconds(size_t);
     // End Other
 
 #ifdef __cplusplus

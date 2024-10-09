@@ -20,6 +20,7 @@
 #endif
 
 #include <stdlib.h>
+#include <time.h>
 
 #include <memory>
 
@@ -397,5 +398,36 @@ int32_t readEnvironmentVariable(const char *key, char *buffer, size_t length)
 {
     const char *value = getenv(key);
     return snprintf(buffer, length, "%s", value);
+}
+int32_t getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds)
+{
+    struct timespec now;
+    const int32_t result = timespec_get(&now, TIME_UTC);
+    *seconds = now.tv_sec;
+    *nanoseconds = now.tv_nsec;
+    return result;
+}
+int32_t sleepInSecondsAndNanoseconds(size_t seconds, size_t nanoseconds)
+{
+    struct timespec ts;
+    ts.tv_sec = seconds;
+    ts.tv_nsec = nanoseconds;
+    return nanosleep(&ts, nullptr);
+}
+int32_t sleepInSeconds(size_t seconds)
+{
+    return sleepInSecondsAndNanoseconds(seconds, 0);
+}
+int32_t sleepInMilliseconds(size_t milliseconds)
+{
+    const size_t millisecondsInSeconds = 1000;
+    return sleepInSecondsAndNanoseconds(milliseconds / millisecondsInSeconds,
+                                        (milliseconds % millisecondsInSeconds) * 100000);
+}
+int32_t sleepInMicroseconds(size_t microseconds)
+{
+    const size_t microSecondsInSeconds = 100000;
+    return sleepInSecondsAndNanoseconds(microseconds / microSecondsInSeconds,
+                                        (microseconds % microSecondsInSeconds) * 1000);
 }
 // End Other
