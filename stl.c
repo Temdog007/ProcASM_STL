@@ -19,27 +19,11 @@
 #include <sys/un.h>
 #endif
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
 
-#include <memory>
-
 #include "stl.h"
-
-struct Deleter
-{
-    void operator()(struct addrinfo *ptr)
-    {
-        freeaddrinfo(ptr);
-    }
-    void operator()(FILE *file)
-    {
-        if (file != nullptr)
-        {
-            fclose(file);
-        }
-    }
-};
 
 // Start Printing
 int32_t printAscii(const char *string, int32_t length)
@@ -93,88 +77,97 @@ int32_t printUTF32(const char32_t *string, size_t length)
 // End Printing
 
 // Start File
-using File = std::unique_ptr<FILE, Deleter>;
-static inline File openFile(const char *string, size_t length, const char *flags)
+static inline FILE *openFile(const char *string, size_t length, const char *flags)
 {
-    if (length > 255)
-    {
-        length = 255;
-    }
     char filename[256];
-    memcpy(filename, string, sizeof(char) * (length - 1));
-    filename[length] = '\0';
+    snprintf(filename, sizeof(filename), "%.*s", (int32_t)(length), string);
     FILE *file = fopen(filename, flags);
-    if (file == nullptr)
+    if (file == NULL)
     {
         perror("fopen");
-        return nullptr;
+        return NULL;
     }
-    return File(file);
+    return file;
 }
 
 int32_t checkIfFileExists(const char *filename, size_t filenameLength)
 {
-    return openFile(filename, filenameLength, "r") != nullptr;
+    FILE *file = openFile(filename, filenameLength, "r");
+    const int32_t fileExists = file != NULL;
+    fclose(file);
+    return fileExists;
 }
 
 size_t readTextFile(const char *filename, size_t filenameLength, char *buffer, size_t length)
 {
-    File file = openFile(filename, filenameLength, "r");
-    if (file == nullptr)
+    FILE *file = openFile(filename, filenameLength, "r");
+    if (file == NULL)
     {
         return 0;
     }
-    return fread(buffer, sizeof(char), length, file.get());
+    const size_t bytesRead = fread(buffer, sizeof(char), length, file);
+    fclose(file);
+    return bytesRead;
 }
 
 size_t readBinaryFile(const char *filename, size_t filenameLength, uint8_t *buffer, size_t length)
 {
-    File file = openFile(filename, filenameLength, "rb");
-    if (file == nullptr)
+    FILE *file = openFile(filename, filenameLength, "rb");
+    if (file == NULL)
     {
         return 0;
     }
-    return fread(buffer, sizeof(char), length, file.get());
+    const size_t bytesRead = fread(buffer, sizeof(char), length, file);
+    fclose(file);
+    return bytesRead;
 }
 
 size_t writeTextFile(const char *filename, size_t filenameLength, const char *buffer, size_t length)
 {
-    File file = openFile(filename, filenameLength, "w");
-    if (file == nullptr)
+    FILE *file = openFile(filename, filenameLength, "w");
+    if (file == NULL)
     {
         return 0;
     }
-    return fwrite(buffer, sizeof(char), length, file.get());
+    const size_t bytesWritten = fwrite(buffer, sizeof(char), length, file);
+    fclose(file);
+    return bytesWritten;
 }
 
 size_t writeBinaryFile(const char *filename, size_t filenameLength, const uint8_t *buffer, size_t length)
 {
-    File file = openFile(filename, filenameLength, "wb");
-    if (file == nullptr)
+    FILE *file = openFile(filename, filenameLength, "wb");
+    if (file == NULL)
     {
         return 0;
     }
-    return fwrite(buffer, sizeof(uint8_t), length, file.get());
+    const size_t bytesWritten = fwrite(buffer, sizeof(char), length, file);
+    fclose(file);
+    return bytesWritten;
 }
 
 size_t appendTextToFile(const char *filename, size_t filenameLength, const char *buffer, size_t length)
 {
-    File file = openFile(filename, filenameLength, "w+");
-    if (file == nullptr)
+    FILE *file = openFile(filename, filenameLength, "w+");
+    if (file == NULL)
     {
         return 0;
     }
-    return fwrite(buffer, sizeof(char), length, file.get());
+    const size_t bytesWritten = fwrite(buffer, sizeof(char), length, file);
+    fclose(file);
+    return bytesWritten;
 }
 
 size_t appendBinaryToFile(const char *filename, size_t filenameLength, const uint8_t *buffer, size_t length)
 {
-    File file = openFile(filename, filenameLength, "wb+");
-    if (file == nullptr)
+    FILE *file = openFile(filename, filenameLength, "wb+");
+    if (file == NULL)
     {
         return 0;
     }
-    return fwrite(buffer, sizeof(uint8_t), length, file.get());
+    const size_t bytesWritten = fwrite(buffer, sizeof(char), length, file);
+    fclose(file);
+    return bytesWritten;
 }
 // End File
 
@@ -186,7 +179,7 @@ size_t appendBinaryToFile(const char *filename, size_t filenameLength, const uin
 #define INVALID_SOCKET (-1)
 #endif
 
-constexpr bool validSocket(SOCKET sockfd) noexcept
+inline bool validSocket(SOCKET sockfd)
 {
 #if _WIN32
     return sockfd != INVALID_SOCKET;
@@ -194,8 +187,6 @@ constexpr bool validSocket(SOCKET sockfd) noexcept
     return sockfd > 0;
 #endif
 }
-
-using AddrInfo = std::unique_ptr<struct addrinfo, Deleter>;
 
 inline void *get_in_addr(struct sockaddr *sa)
 {
@@ -206,7 +197,7 @@ inline void *get_in_addr(struct sockaddr *sa)
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
 }
 
-inline void closeSocket(SOCKET sockfd)
+inline void closeActualSocket(SOCKET sockfd)
 {
     if (validSocket(sockfd))
     {
@@ -222,7 +213,7 @@ inline void closeSocket(SOCKET sockfd)
 static inline void *openSocket(const char *ip, size_t length, uint16_t port, bool isClient)
 {
     char ipAddress[256];
-    snprintf(ipAddress, sizeof(ipAddress), "%.*s", static_cast<int32_t>(length), ip);
+    snprintf(ipAddress, sizeof(ipAddress), "%.*s", (int32_t)(length), ip);
 
     char buffer[16];
     snprintf(buffer, sizeof(buffer), "%u", port);
@@ -233,23 +224,23 @@ static inline void *openSocket(const char *ip, size_t length, uint16_t port, boo
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
-    struct addrinfo *servinfoPtr = nullptr;
-    const int status = getaddrinfo(ipAddress, buffer, &hints, &servinfoPtr);
+    struct addrinfo *addressInfo = NULL;
+    const int status = getaddrinfo(ipAddress, buffer, &hints, &addressInfo);
     if (status != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
-        return nullptr;
+        return NULL;
     }
 
-    AddrInfo servinfo(servinfoPtr);
+    void *newSocket = NULL;
 
-    for (auto p = servinfo.get(); p != nullptr; p = p->ai_next)
+    for (struct addrinfo *p = addressInfo; p != NULL; p = p->ai_next)
     {
         SOCKET sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (!validSocket(sockfd))
         {
             perror("socket");
-            goto cleanup;
+            continue;
         }
         if (isClient)
         {
@@ -261,8 +252,12 @@ static inline void *openSocket(const char *ip, size_t length, uint16_t port, boo
         }
         else
         {
+#if _WIN32
+            char yes = 1;
+#else
             int yes = 1;
-            if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
+#endif
+            if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
             {
                 perror("setsockopt");
                 goto cleanup;
@@ -278,13 +273,15 @@ static inline void *openSocket(const char *ip, size_t length, uint16_t port, boo
                 goto cleanup;
             }
         }
-        return reinterpret_cast<void *>(static_cast<size_t>(sockfd));
+        newSocket = (void *)((size_t)(sockfd));
+        break;
     cleanup:
-        closeSocket(sockfd);
+        closeActualSocket(sockfd);
     }
 
+    freeaddrinfo(addressInfo);
     fprintf(stderr, "Failed to find address info for %s:%u\n", ip, port);
-    return nullptr;
+    return newSocket;
 }
 
 void *openServer(const char *ip, size_t length, uint16_t port)
@@ -297,9 +294,8 @@ void *openClient(const char *ip, size_t length, uint16_t port)
     return openSocket(ip, length, port, true);
 }
 
-inline bool socketReady(SOCKET sockfd, bool readFrom)
+inline bool socketReady(SOCKET sockfd, int flag)
 {
-    const int flag = readFrom ? POLLIN : POLLOUT;
     struct pollfd pfd;
     pfd.fd = sockfd;
     pfd.events = flag;
@@ -314,41 +310,41 @@ inline bool socketReady(SOCKET sockfd, bool readFrom)
 
 inline bool socketReadyToRead(SOCKET sockfd)
 {
-    return socketReady(sockfd, true);
+    return socketReady(sockfd, POLLIN);
 }
 
 void *acceptClient(void *ptr)
 {
-    size_t addr = reinterpret_cast<size_t>(ptr);
-    SOCKET sockfd = static_cast<SOCKET>(addr);
+    size_t addr = (size_t)(ptr);
+    SOCKET sockfd = (SOCKET)(addr);
     if (!socketReadyToRead(sockfd))
     {
-        return nullptr;
+        return NULL;
     }
     struct sockaddr_storage theirAddr;
     socklen_t addr_size = sizeof(theirAddr);
-    auto clientSocket = accept(sockfd, (struct sockaddr *)&theirAddr, &addr_size);
+    SOCKET clientSocket = accept(sockfd, (struct sockaddr *)&theirAddr, &addr_size);
     if (!validSocket(clientSocket))
     {
         perror("accept");
-        return nullptr;
+        return NULL;
     }
-    return reinterpret_cast<void *>(static_cast<size_t>(clientSocket));
+    return (void *)((size_t)(clientSocket));
 }
 
 int32_t readFromSocket(void *ptr, char *buffer, size_t length)
 {
-    if (ptr == nullptr)
+    if (ptr == NULL)
     {
         return -1;
     }
-    size_t addr = reinterpret_cast<size_t>(ptr);
-    SOCKET sockfd = static_cast<SOCKET>(addr);
+    size_t addr = (size_t)(ptr);
+    SOCKET sockfd = (SOCKET)(addr);
     if (!socketReadyToRead(sockfd))
     {
         return 0;
     }
-    auto bytesRead = recv(sockfd, buffer, length, 0);
+    int32_t bytesRead = recv(sockfd, buffer, length, 0);
     if (bytesRead < 0)
     {
         perror("recv");
@@ -358,22 +354,22 @@ int32_t readFromSocket(void *ptr, char *buffer, size_t length)
 
 inline bool socketReadyToWrite(SOCKET sockfd)
 {
-    return socketReady(sockfd, false);
+    return socketReady(sockfd, POLLOUT);
 }
 
 int32_t sendThroughSocket(void *ptr, const char *buffer, size_t length)
 {
-    if (ptr == nullptr)
+    if (ptr == NULL)
     {
         return -1;
     }
-    size_t addr = reinterpret_cast<size_t>(ptr);
-    SOCKET sockfd = static_cast<SOCKET>(addr);
+    size_t addr = (size_t)(ptr);
+    SOCKET sockfd = (SOCKET)(addr);
     if (!socketReadyToWrite(sockfd))
     {
         return 0;
     }
-    auto bytesSent = send(sockfd, buffer, length, MSG_NOSIGNAL);
+    int32_t bytesSent = send(sockfd, buffer, length, MSG_NOSIGNAL);
     if (bytesSent < 0)
     {
         perror("send");
@@ -383,13 +379,13 @@ int32_t sendThroughSocket(void *ptr, const char *buffer, size_t length)
 
 void closeSocket(void *ptr)
 {
-    if (ptr == nullptr)
+    if (ptr == NULL)
     {
         return;
     }
-    size_t addr = reinterpret_cast<size_t>(ptr);
-    SOCKET sockfd = static_cast<SOCKET>(addr);
-    closeSocket(sockfd);
+    size_t addr = (size_t)(ptr);
+    SOCKET sockfd = (SOCKET)(addr);
+    closeActualSocket(sockfd);
 }
 // End Network
 
@@ -412,7 +408,7 @@ int32_t sleepInSecondsAndNanoseconds(size_t seconds, size_t nanoseconds)
     struct timespec ts;
     ts.tv_sec = seconds;
     ts.tv_nsec = nanoseconds;
-    return nanosleep(&ts, nullptr);
+    return nanosleep(&ts, NULL);
 }
 int32_t sleepInSeconds(size_t seconds)
 {
