@@ -9,12 +9,14 @@
 #include <unistd.h>
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #endif
@@ -25,13 +27,63 @@
 
 #include "stl.h"
 
+static inline struct timespec startTiming()
+{
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    return now;
+}
+
+static inline struct timespec timespec_diff(const struct timespec *restrict a, const struct timespec *restrict b)
+{
+    struct timespec result;
+    result.tv_sec = a->tv_sec - b->tv_sec;
+    result.tv_nsec = a->tv_nsec - b->tv_nsec;
+    if (result.tv_nsec < 0)
+    {
+        --result.tv_sec;
+        result.tv_nsec += 1000000000L;
+    }
+    return result;
+}
+
+static inline int32_t stopTiming(const char *message, const struct timespec *restrict start)
+{
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+
+    const struct timespec diff = timespec_diff(&now, start);
+    return printf("%s took %ld seconds and %ld nanoseconds\n", message, diff.tv_sec, diff.tv_nsec);
+}
+
 // Start Printing
 int32_t printAscii(const char *string, int32_t length)
 {
     return printf("%.*s\n", length, string);
 }
 
-static inline size_t ProcASM_utf32_to_utf8(uint8_t *const buffer, const unsigned int code)
+size_t utf8Length(const uint8_t c)
+{
+    if (c < 0x80)
+    {
+        return 1; /* 0xxxxxxx */
+    }
+    else if ((c & 0xe0) == 0xc0)
+    {
+        return 2; /* 110xxxxx */
+    }
+    else if ((c & 0xf0) == 0xe0)
+    {
+        return 3; /* 1110xxxx */
+    }
+    else if ((c & 0xf8) == 0xf0 && (c <= 0xf4))
+    {
+        return 4; /* 11110xxx */
+    }
+    return 0; /* invalid UTF8 */
+}
+
+size_t convertUTF32toUTF8(uint8_t *const buffer, const unsigned int code)
 {
     if (code <= 0x7F)
     {
@@ -62,15 +114,104 @@ static inline size_t ProcASM_utf32_to_utf8(uint8_t *const buffer, const unsigned
     return 0;
 }
 
+size_t convertUTF32toUTF8List(char *dst, size_t dstLength, const char32_t *src, size_t srcLength)
+{
+    size_t j = 0;
+    for (size_t i = 0; i < srcLength && j < dstLength; ++i)
+    {
+        char buffer[5];
+        const size_t len = convertUTF32toUTF8((uint8_t *)buffer, src[i]);
+        if (len == 0)
+        {
+            break;
+        }
+        buffer[len] = '\0';
+        snprintf(dst + j, dstLength - j, "%s", buffer);
+        j += len;
+    }
+    return j;
+}
+
+size_t validUTF8(const uint8_t *c)
+{
+    const size_t len = utf8Length(c[0]);
+    switch (len)
+    {
+    case 4:
+        if ((c[3] & 0xc0) != 0x80)
+        {
+            break;
+        }
+        [[fallthrough]];
+    case 3:
+        if ((c[2] & 0xc0) != 0x80)
+        {
+            break;
+        }
+        [[fallthrough]];
+    case 2:
+        if ((c[1] & 0xc0) != 0x80)
+        {
+            break;
+        }
+        [[fallthrough]];
+    case 1:
+        return len; /* no trailing bytes to validate */
+    default:
+        break;
+    }
+    return 0; /* invalid utf8 */
+}
+
+char32_t convertUTF8toUTF32(const uint8_t *c, size_t *len)
+{
+    *len = validUTF8(c);
+    switch (*len)
+    {
+    case 1:
+        return *c;
+    case 2:
+        return ((c[0] & 0x1f) << 6) | (c[1] & 0x3f);
+    case 3:
+        return ((c[0] & 0x0f) << 12) | ((c[1] & 0x3f) << 6) | (c[2] & 0x3f);
+    case 4:
+        return ((c[0] & 0x07) << 18) | ((c[1] & 0x3f) << 12) | ((c[2] & 0x3f) << 6) | (c[3] & 0x3f);
+    default:
+        break;
+    }
+    return 0;
+}
+
+size_t convertUTF8toUTF32List(char32_t *dst, size_t dstLength, const char *src, size_t srcLength)
+{
+    size_t i = 0;
+    for (size_t j = 0; i < dstLength && j < srcLength; ++i)
+    {
+        size_t len;
+        const char32_t c = convertUTF8toUTF32((const uint8_t *)&src[j], &len);
+        if (len == 0)
+        {
+            break;
+        }
+        dst[i] = c;
+        j += len;
+    }
+    return i;
+}
+
 int32_t printUTF32(const char32_t *string, size_t length)
 {
     int total = 0;
     for (size_t i = 0; i < length; ++i)
     {
         char buffer[5];
-        const size_t size = ProcASM_utf32_to_utf8((uint8_t *)buffer, string[i]);
+        const size_t size = convertUTF32toUTF8((uint8_t *)buffer, string[i]);
         buffer[size] = '\0';
         total += printf("%s", buffer);
+    }
+    if (puts("") >= 0)
+    {
+        ++total;
     }
     return total;
 }
@@ -179,7 +320,7 @@ size_t appendBinaryToFile(const char *filename, size_t filenameLength, const uin
 #define INVALID_SOCKET (-1)
 #endif
 
-inline bool validSocket(SOCKET sockfd)
+static inline bool validSocket(SOCKET sockfd)
 {
 #if _WIN32
     return sockfd != INVALID_SOCKET;
@@ -188,7 +329,7 @@ inline bool validSocket(SOCKET sockfd)
 #endif
 }
 
-inline void *get_in_addr(struct sockaddr *sa)
+static inline void *get_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET)
     {
@@ -197,20 +338,69 @@ inline void *get_in_addr(struct sockaddr *sa)
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
 }
 
-inline void closeActualSocket(SOCKET sockfd)
+size_t getIpString(const struct sockaddr *sa, char *s, size_t length)
+{
+    switch (sa->sa_family)
+    {
+    case AF_INET:
+        inet_ntop(AF_INET, &(((struct sockaddr_in *)sa)->sin_addr), s, length);
+        break;
+    case AF_INET6:
+        inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)sa)->sin6_addr), s, length);
+        break;
+    default:
+        return snprintf(s, length, "Unknown AF");
+    }
+    return strlen(s);
+}
+
+size_t getSocket(SOCKET sockfd, char *buffer, size_t length)
+{
+    struct sockaddr_storage addr;
+    socklen_t len;
+    if (getpeername(sockfd, (struct sockaddr *)&addr, &len) == -1)
+    {
+        perror("getpeername");
+        return snprintf(buffer, length, "Unknown Socket");
+    }
+
+    return getIpString((struct sockaddr *)&addr, buffer, length);
+}
+
+size_t printSocket(SOCKET sockfd, char *message)
+{
+    char buffer[256];
+    size_t read = 0;
+    if (message != NULL)
+    {
+        read += snprintf(buffer, sizeof(buffer), "%s ", message);
+    }
+    read += snprintf(buffer + read, sizeof(buffer) - read, "socket (%d) ", sockfd);
+    getSocket(sockfd, buffer + read, sizeof(buffer) - read);
+    return printf("%s \n", buffer);
+}
+
+size_t getSocketInformation(void *ptr, char *buffer, size_t length)
+{
+    size_t addr = (size_t)(ptr);
+    SOCKET sockfd = (SOCKET)(addr);
+    return getSocket(sockfd, buffer, length);
+}
+
+static inline void closeActualSocket(SOCKET sockfd)
 {
     if (validSocket(sockfd))
     {
+        printSocket(sockfd, "Closing");
 #if _WIN32
         closesocket(sockfd);
 #else
         close(sockfd);
 #endif
-        printf("Closed socket: %d\n", sockfd);
     }
 }
 
-static inline void *openSocket(const char *ip, size_t length, uint16_t port, bool isClient)
+static inline void *openIpSocket(const char *ip, size_t length, uint16_t port, bool isClient)
 {
     char ipAddress[256];
     snprintf(ipAddress, sizeof(ipAddress), "%.*s", (int32_t)(length), ip);
@@ -249,6 +439,7 @@ static inline void *openSocket(const char *ip, size_t length, uint16_t port, boo
                 perror("connect");
                 goto cleanup;
             }
+            printSocket(sockfd, "Opening");
         }
         else
         {
@@ -272,43 +463,127 @@ static inline void *openSocket(const char *ip, size_t length, uint16_t port, boo
                 perror("listen");
                 goto cleanup;
             }
+            printf("Opening server (%d)\n", sockfd);
         }
         newSocket = (void *)((size_t)(sockfd));
-        break;
+        goto end;
     cleanup:
         closeActualSocket(sockfd);
     }
 
+    fprintf(stderr, "Failed to find address info for %s:%u\n", ipAddress, port);
+end:
     freeaddrinfo(addressInfo);
-    fprintf(stderr, "Failed to find address info for %s:%u\n", ip, port);
     return newSocket;
 }
 
-void *openServer(const char *ip, size_t length, uint16_t port)
+void *openIpServer(const char *ip, size_t length, uint16_t port)
 {
-    return openSocket(ip, length, port, false);
+    return openIpSocket(ip, length, port, false);
 }
 
-void *openClient(const char *ip, size_t length, uint16_t port)
+void *openIpClient(const char *ip, size_t length, uint16_t port)
 {
-    return openSocket(ip, length, port, true);
+    return openIpSocket(ip, length, port, true);
 }
 
-inline bool socketReady(SOCKET sockfd, int flag)
+static inline void *openDomainSocket(const char *ip, size_t length, bool isClient)
+{
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+
+    if (length > sizeof(addr.sun_path) - 1)
+    {
+        fprintf(stderr, "Domain address is too long (%zu)\n", length);
+        return NULL;
+    }
+
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%.*s", (int32_t)(length), ip);
+
+    if (remove(addr.sun_path) == -1 && errno != ENOENT)
+    {
+        fprintf(stderr, "Failed to remove old domain file: %s\n", addr.sun_path);
+        return NULL;
+    }
+
+    SOCKET sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (!validSocket(sockfd))
+    {
+        perror("socket");
+        return NULL;
+    }
+
+    if (isClient)
+    {
+        if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+        {
+            perror("client: connect");
+            return NULL;
+        }
+    }
+    else
+    {
+        if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+        {
+            perror("bind");
+            return NULL;
+        }
+
+        if (listen(sockfd, 10) == -1)
+        {
+            perror("listen");
+            return NULL;
+        }
+    }
+
+    return (void *)((size_t)(sockfd));
+}
+
+void *openDomainServer(const char *ip, size_t length)
+{
+    return openDomainSocket(ip, length, false);
+}
+
+void *openDomainClient(const char *ip, size_t length)
+{
+    return openDomainSocket(ip, length, true);
+}
+
+enum SocketState
+{
+    SocketState_NotReady,
+    SocketState_Ready,
+    SocketState_Error,
+};
+
+static inline enum SocketState socketReady(SOCKET sockfd, int flag)
 {
     struct pollfd pfd;
+    memset(&pfd, 0, sizeof(pfd));
     pfd.fd = sockfd;
     pfd.events = flag;
 
 #if _WIN32
-    int events = WSAPoll(&pfd, 1, 0);
+    const int events = WSAPoll(&pfd, 1, 0);
 #else
-    int events = poll(&pfd, 1, 0);
+    const int events = poll(&pfd, 1, 0);
 #endif
-    return events > 0 && (pfd.revents & flag) != 0;
+    if (events > 0)
+    {
+        if ((pfd.revents & (POLLERR | POLLNVAL | POLLPRI)) != 0)
+        {
+            return SocketState_Error;
+        }
+        if ((pfd.revents & flag) != 0)
+        {
+            return SocketState_Ready;
+        }
+    }
+    return SocketState_NotReady;
 }
 
-inline bool socketReadyToRead(SOCKET sockfd)
+static inline enum SocketState socketReadyToRead(SOCKET sockfd)
 {
     return socketReady(sockfd, POLLIN);
 }
@@ -317,22 +592,29 @@ void *acceptClient(void *ptr)
 {
     size_t addr = (size_t)(ptr);
     SOCKET sockfd = (SOCKET)(addr);
-    if (!socketReadyToRead(sockfd))
+    switch (socketReadyToRead(sockfd))
     {
+    case SocketState_Ready:
+        break;
+    default:
         return NULL;
     }
     struct sockaddr_storage theirAddr;
     socklen_t addr_size = sizeof(theirAddr);
+
     SOCKET clientSocket = accept(sockfd, (struct sockaddr *)&theirAddr, &addr_size);
     if (!validSocket(clientSocket))
     {
         perror("accept");
         return NULL;
     }
+    char buffer[INET6_ADDRSTRLEN];
+    inet_ntop(theirAddr.ss_family, get_in_addr((struct sockaddr *)&theirAddr), buffer, sizeof(buffer));
+    printf("Accepted client: %s (%d)\n", buffer, clientSocket);
     return (void *)((size_t)(clientSocket));
 }
 
-int32_t readFromSocket(void *ptr, char *buffer, size_t length)
+int32_t readFromSocket(void *ptr, void *buffer, size_t length)
 {
     if (ptr == NULL)
     {
@@ -340,11 +622,16 @@ int32_t readFromSocket(void *ptr, char *buffer, size_t length)
     }
     size_t addr = (size_t)(ptr);
     SOCKET sockfd = (SOCKET)(addr);
-    if (!socketReadyToRead(sockfd))
+    switch (socketReadyToRead(sockfd))
     {
+    case SocketState_Ready:
+        break;
+    case SocketState_NotReady:
         return 0;
+    default:
+        return -1;
     }
-    int32_t bytesRead = recv(sockfd, buffer, length, 0);
+    const int32_t bytesRead = recv(sockfd, buffer, length, 0);
     if (bytesRead < 0)
     {
         perror("recv");
@@ -352,24 +639,30 @@ int32_t readFromSocket(void *ptr, char *buffer, size_t length)
     return bytesRead;
 }
 
-inline bool socketReadyToWrite(SOCKET sockfd)
+static inline enum SocketState socketReadyToWrite(SOCKET sockfd)
 {
     return socketReady(sockfd, POLLOUT);
 }
 
-int32_t sendThroughSocket(void *ptr, const char *buffer, size_t length)
+int32_t sendThroughSocket(void *ptr, const void *buffer, size_t length)
 {
     if (ptr == NULL)
     {
+        fputs("Passed NULL to sendThroughSocket\n", stderr);
         return -1;
     }
     size_t addr = (size_t)(ptr);
     SOCKET sockfd = (SOCKET)(addr);
-    if (!socketReadyToWrite(sockfd))
+    switch (socketReadyToWrite(sockfd))
     {
+    case SocketState_Ready:
+        break;
+    case SocketState_NotReady:
         return 0;
+    default:
+        return -1;
     }
-    int32_t bytesSent = send(sockfd, buffer, length, MSG_NOSIGNAL);
+    const int32_t bytesSent = send(sockfd, buffer, length, MSG_NOSIGNAL);
     if (bytesSent < 0)
     {
         perror("send");
@@ -390,17 +683,30 @@ void closeSocket(void *ptr)
 // End Network
 
 // Start Other
-int32_t readEnvironmentVariable(const char *key, char *buffer, size_t length)
+int32_t readEnvironmentVariable(const char *key, size_t keyLength, char *buffer, size_t bufferLength)
 {
-    const char *value = getenv(key);
-    return snprintf(buffer, length, "%s", value);
+    char actualKey[256];
+    snprintf(actualKey, sizeof(actualKey), "%.*s", (int32_t)keyLength, key);
+
+    const char *value = getenv(actualKey);
+    if (value == NULL)
+    {
+        return 0;
+    }
+    return snprintf(buffer, bufferLength, "%s", value);
 }
 int32_t getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds)
 {
     struct timespec now;
     const int32_t result = timespec_get(&now, TIME_UTC);
-    *seconds = now.tv_sec;
-    *nanoseconds = now.tv_nsec;
+    if (seconds != NULL)
+    {
+        *seconds = now.tv_sec;
+    }
+    if (nanoseconds != NULL)
+    {
+        *nanoseconds = now.tv_nsec;
+    }
     return result;
 }
 int32_t sleepInSecondsAndNanoseconds(size_t seconds, size_t nanoseconds)
