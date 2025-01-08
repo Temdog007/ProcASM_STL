@@ -23,8 +23,8 @@ extern "C"
     API char32_t convertUTF8toUTF32(const uint8_t *, size_t *);
     API size_t validUTF8(const uint8_t *);
     API size_t utf8Length(uint8_t);
-    API size_t convertUTF32toUTF8List(char *, size_t, const char32_t *, size_t);
-    API size_t convertUTF8toUTF32List(char32_t *, size_t, const char *, size_t);
+    API size_t convertUTF32toUTF8List(void *, size_t, const char32_t *, size_t);
+    API size_t convertUTF8toUTF32List(char32_t *, size_t, const void *, size_t);
     // End Convert
 
     // Start File

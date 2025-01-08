@@ -27,6 +27,8 @@
 
 #include "stl.h"
 
+#include <ProcASM_Main.h>
+
 static inline struct timespec startTiming()
 {
     struct timespec now;
@@ -34,7 +36,8 @@ static inline struct timespec startTiming()
     return now;
 }
 
-static inline struct timespec timespec_diff(const struct timespec *restrict a, const struct timespec *restrict b)
+static inline struct timespec timespec_diff(const struct timespec *ProcASM_Restrict a,
+                                            const struct timespec *ProcASM_Restrict b)
 {
     struct timespec result;
     result.tv_sec = a->tv_sec - b->tv_sec;
@@ -47,7 +50,7 @@ static inline struct timespec timespec_diff(const struct timespec *restrict a, c
     return result;
 }
 
-static inline int32_t stopTiming(const char *message, const struct timespec *restrict start)
+static inline int32_t stopTiming(const char *message, const struct timespec *ProcASM_Restrict start)
 {
     struct timespec now;
     timespec_get(&now, TIME_UTC);
@@ -114,19 +117,20 @@ size_t convertUTF32toUTF8(uint8_t *const buffer, const unsigned int code)
     return 0;
 }
 
-size_t convertUTF32toUTF8List(char *dst, size_t dstLength, const char32_t *src, size_t srcLength)
+size_t convertUTF32toUTF8List(void *ptr, size_t dstLength, const char32_t *src, size_t srcLength)
 {
+    char *dst = (char *)ptr;
     size_t j = 0;
     for (size_t i = 0; i < srcLength && j < dstLength; ++i)
     {
         char buffer[5];
-        const size_t len = convertUTF32toUTF8((uint8_t *)buffer, src[i]);
+        size_t len = convertUTF32toUTF8((uint8_t *)buffer, src[i]);
         if (len == 0)
         {
-            break;
+            return 0;
         }
         buffer[len] = '\0';
-        snprintf(dst + j, dstLength - j, "%s", buffer);
+        len = snprintf(dst + j, dstLength - j, "%s", buffer);
         j += len;
     }
     return j;
@@ -182,8 +186,9 @@ char32_t convertUTF8toUTF32(const uint8_t *c, size_t *len)
     return 0;
 }
 
-size_t convertUTF8toUTF32List(char32_t *dst, size_t dstLength, const char *src, size_t srcLength)
+size_t convertUTF8toUTF32List(char32_t *dst, size_t dstLength, const void *ptr, size_t srcLength)
 {
+    const char *src = (const char *)ptr;
     size_t i = 0;
     for (size_t j = 0; i < dstLength && j < srcLength; ++i)
     {
@@ -191,7 +196,7 @@ size_t convertUTF8toUTF32List(char32_t *dst, size_t dstLength, const char *src, 
         const char32_t c = convertUTF8toUTF32((const uint8_t *)&src[j], &len);
         if (len == 0)
         {
-            break;
+            return 0;
         }
         dst[i] = c;
         j += len;
@@ -357,7 +362,8 @@ size_t getIpString(const struct sockaddr *sa, char *s, size_t length)
 size_t getSocket(SOCKET sockfd, char *buffer, size_t length)
 {
     struct sockaddr_storage addr;
-    socklen_t len;
+    memset(&addr, 0, sizeof(addr));
+    socklen_t len = sizeof(addr);
     if (getpeername(sockfd, (struct sockaddr *)&addr, &len) == -1)
     {
         perror("getpeername");
@@ -367,7 +373,7 @@ size_t getSocket(SOCKET sockfd, char *buffer, size_t length)
     return getIpString((struct sockaddr *)&addr, buffer, length);
 }
 
-size_t printSocket(SOCKET sockfd, char *message)
+static inline size_t printSocket(SOCKET sockfd, const char *message)
 {
     char buffer[256];
     size_t read = 0;
@@ -619,6 +625,10 @@ int32_t readFromSocket(void *ptr, void *buffer, size_t length)
     if (ptr == NULL)
     {
         return -1;
+    }
+    if (length == 0)
+    {
+        return 0;
     }
     size_t addr = (size_t)(ptr);
     SOCKET sockfd = (SOCKET)(addr);
