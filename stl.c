@@ -6,6 +6,7 @@
 #undef min
 #undef max
 #else
+#define _GNU_SOURCE
 #include <unistd.h>
 
 #include <arpa/inet.h>
@@ -25,39 +26,10 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include <openssl/evp.h>
+#include <openssl/sha.h>
+
 #include "stl.h"
-
-#include <ProcASM_Main.h>
-
-static inline struct timespec startTiming()
-{
-    struct timespec now;
-    timespec_get(&now, TIME_UTC);
-    return now;
-}
-
-static inline struct timespec timespec_diff(const struct timespec *ProcASM_Restrict a,
-                                            const struct timespec *ProcASM_Restrict b)
-{
-    struct timespec result;
-    result.tv_sec = a->tv_sec - b->tv_sec;
-    result.tv_nsec = a->tv_nsec - b->tv_nsec;
-    if (result.tv_nsec < 0)
-    {
-        --result.tv_sec;
-        result.tv_nsec += 1000000000L;
-    }
-    return result;
-}
-
-static inline int32_t stopTiming(const char *message, const struct timespec *ProcASM_Restrict start)
-{
-    struct timespec now;
-    timespec_get(&now, TIME_UTC);
-
-    const struct timespec diff = timespec_diff(&now, start);
-    return printf("%s took %ld seconds and %ld nanoseconds\n", message, diff.tv_sec, diff.tv_nsec);
-}
 
 // Start Printing
 int32_t printAscii(const char *string, int32_t length)
@@ -214,10 +186,7 @@ int32_t printUTF32(const char32_t *string, size_t length)
         buffer[size] = '\0';
         total += printf("%s", buffer);
     }
-    if (puts("") >= 0)
-    {
-        ++total;
-    }
+    total += puts("");
     return total;
 }
 // End Printing
@@ -236,10 +205,10 @@ static inline FILE *openFile(const char *string, size_t length, const char *flag
     return file;
 }
 
-int32_t checkIfFileExists(const char *filename, size_t filenameLength)
+bool checkIfFileExists(const char *filename, size_t filenameLength)
 {
     FILE *file = openFile(filename, filenameLength, "r");
-    const int32_t fileExists = file != NULL;
+    const bool fileExists = file != NULL;
     fclose(file);
     return fileExists;
 }
@@ -397,7 +366,10 @@ static inline void closeActualSocket(SOCKET sockfd)
 {
     if (validSocket(sockfd))
     {
+#if NDEBUG
+#else
         printSocket(sockfd, "Closing");
+#endif
 #if _WIN32
         closesocket(sockfd);
 #else
@@ -464,7 +436,7 @@ static inline void *openIpSocket(const char *ip, size_t length, uint16_t port, b
                 perror("bind");
                 goto cleanup;
             }
-            if (listen(sockfd, 10) == -1)
+            if (listen(sockfd, 128) == -1)
             {
                 perror("listen");
                 goto cleanup;
@@ -563,42 +535,51 @@ enum SocketState
     SocketState_Error,
 };
 
-static inline enum SocketState socketReady(SOCKET sockfd, int flag)
+static inline enum SocketState socketReady(SOCKET sockfd, size_t timeout, int flag)
 {
+    const int errors = POLLERR | POLLNVAL | POLLPRI | POLLHUP | POLLRDHUP;
+
     struct pollfd pfd;
     memset(&pfd, 0, sizeof(pfd));
     pfd.fd = sockfd;
-    pfd.events = flag;
+    pfd.events = flag | errors;
 
 #if _WIN32
-    const int events = WSAPoll(&pfd, 1, 0);
+    const int events = WSAPoll(&pfd, 1, timeout);
 #else
-    const int events = poll(&pfd, 1, 0);
+    const int events = poll(&pfd, 1, timeout);
 #endif
-    if (events > 0)
+
+    if (events < 0)
     {
-        if ((pfd.revents & (POLLERR | POLLNVAL | POLLPRI)) != 0)
-        {
-            return SocketState_Error;
-        }
-        if ((pfd.revents & flag) != 0)
-        {
-            return SocketState_Ready;
-        }
+        return SocketState_Error;
+    }
+    if (events == 0)
+    {
+        return SocketState_NotReady;
+    }
+
+    if ((pfd.revents & errors) != 0)
+    {
+        return SocketState_Error;
+    }
+    if ((pfd.revents & flag) != 0)
+    {
+        return SocketState_Ready;
     }
     return SocketState_NotReady;
 }
 
-static inline enum SocketState socketReadyToRead(SOCKET sockfd)
+static inline enum SocketState socketReadyToRead(SOCKET sockfd, size_t timeout)
 {
-    return socketReady(sockfd, POLLIN);
+    return socketReady(sockfd, timeout, POLLIN | POLLHUP);
 }
 
-void *acceptClient(void *ptr)
+void *acceptClient(void *ptr, size_t timeout)
 {
     size_t addr = (size_t)(ptr);
     SOCKET sockfd = (SOCKET)(addr);
-    switch (socketReadyToRead(sockfd))
+    switch (socketReadyToRead(sockfd, timeout))
     {
     case SocketState_Ready:
         break;
@@ -616,7 +597,10 @@ void *acceptClient(void *ptr)
     }
     char buffer[INET6_ADDRSTRLEN];
     inet_ntop(theirAddr.ss_family, get_in_addr((struct sockaddr *)&theirAddr), buffer, sizeof(buffer));
+#if NDEBUG
+#else
     printf("Accepted client: %s (%d)\n", buffer, clientSocket);
+#endif
     return (void *)((size_t)(clientSocket));
 }
 
@@ -632,7 +616,7 @@ int32_t readFromSocket(void *ptr, void *buffer, size_t length)
     }
     size_t addr = (size_t)(ptr);
     SOCKET sockfd = (SOCKET)(addr);
-    switch (socketReadyToRead(sockfd))
+    switch (socketReadyToRead(sockfd, 0))
     {
     case SocketState_Ready:
         break;
@@ -651,7 +635,7 @@ int32_t readFromSocket(void *ptr, void *buffer, size_t length)
 
 static inline enum SocketState socketReadyToWrite(SOCKET sockfd)
 {
-    return socketReady(sockfd, POLLOUT);
+    return socketReady(sockfd, 0, POLLOUT);
 }
 
 int32_t sendThroughSocket(void *ptr, const void *buffer, size_t length)
@@ -680,6 +664,44 @@ int32_t sendThroughSocket(void *ptr, const void *buffer, size_t length)
     return bytesSent;
 }
 
+bool sendAllThroughSocket(void *ptr, const void *output, size_t length)
+{
+    const char *buffer = (const char *)output;
+    size_t sent = 0;
+    while (sent < length)
+    {
+        const int result = sendThroughSocket(ptr, buffer + sent, length - sent);
+        if (result < 0)
+        {
+            return false;
+        }
+        sent += result;
+    }
+    return true;
+}
+
+int32_t convertWebSocketKeyToAcceptKey(char *inputOutput, size_t length)
+{
+    unsigned char buffer[EVP_MAX_MD_SIZE];
+    if (length >= sizeof(buffer))
+    {
+        return -1;
+    }
+    memcpy(buffer, inputOutput, length);
+
+    EVP_MD_CTX *ctx = EVP_MD_CTX_create();
+    const EVP_MD *md = EVP_sha1();
+    EVP_DigestInit_ex(ctx, md, NULL);
+    EVP_DigestUpdate(ctx, inputOutput, length);
+
+    unsigned int len;
+    EVP_DigestFinal_ex(ctx, buffer, &len);
+    EVP_MD_CTX_destroy(ctx);
+    EVP_cleanup();
+
+    return EVP_EncodeBlock(inputOutput, buffer, len);
+}
+
 void closeSocket(void *ptr)
 {
     if (ptr == NULL)
@@ -705,7 +727,8 @@ int32_t readEnvironmentVariable(const char *key, size_t keyLength, char *buffer,
     }
     return snprintf(buffer, bufferLength, "%s", value);
 }
-int32_t getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds)
+
+bool getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds)
 {
     struct timespec now;
     const int32_t result = timespec_get(&now, TIME_UTC);
@@ -717,29 +740,45 @@ int32_t getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds)
     {
         *nanoseconds = now.tv_nsec;
     }
-    return result;
+    return result != 0;
 }
-int32_t sleepInSecondsAndNanoseconds(size_t seconds, size_t nanoseconds)
+
+bool sleepInSecondsAndNanoseconds(size_t seconds, size_t nanoseconds)
 {
     struct timespec ts;
     ts.tv_sec = seconds;
     ts.tv_nsec = nanoseconds;
-    return nanosleep(&ts, NULL);
+    return nanosleep(&ts, NULL) == 0;
 }
-int32_t sleepInSeconds(size_t seconds)
+
+bool sleepInSeconds(size_t seconds)
 {
     return sleepInSecondsAndNanoseconds(seconds, 0);
 }
-int32_t sleepInMilliseconds(size_t milliseconds)
+
+bool sleepInMilliseconds(size_t milliseconds)
 {
     const size_t millisecondsInSeconds = 1000;
+    const size_t nanoSecondsInMilliseconds = 1000000;
     return sleepInSecondsAndNanoseconds(milliseconds / millisecondsInSeconds,
-                                        (milliseconds % millisecondsInSeconds) * 100000);
+                                        (milliseconds % millisecondsInSeconds) * nanoSecondsInMilliseconds);
 }
-int32_t sleepInMicroseconds(size_t microseconds)
+
+bool sleepInMicroseconds(size_t microseconds)
 {
-    const size_t microSecondsInSeconds = 100000;
+    const size_t microSecondsInSeconds = 1000000;
+    const size_t nanoSecondsInMicroSeconds = 1000;
     return sleepInSecondsAndNanoseconds(microseconds / microSecondsInSeconds,
-                                        (microseconds % microSecondsInSeconds) * 1000);
+                                        (microseconds % microSecondsInSeconds) * nanoSecondsInMicroSeconds);
 }
 // End Other
+
+void seedRandomNumberGenerator()
+{
+    srand(time(NULL));
+}
+
+int32_t getRandomNumber()
+{
+    return rand();
+}
