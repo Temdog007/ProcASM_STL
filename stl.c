@@ -1,4 +1,5 @@
 #if _WIN32
+#include <Windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -14,6 +15,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -680,7 +682,7 @@ bool sendAllThroughSocket(void *ptr, const void *output, size_t length)
     return true;
 }
 
-int32_t convertWebSocketKeyToAcceptKey(char *inputOutput, size_t length)
+int32_t convertWebSocketKeyToAcceptKey(unsigned char *inputOutput, size_t length)
 {
     unsigned char buffer[EVP_MAX_MD_SIZE];
     if (length >= sizeof(buffer))
@@ -770,6 +772,58 @@ bool sleepInMicroseconds(size_t microseconds)
     const size_t nanoSecondsInMicroSeconds = 1000;
     return sleepInSecondsAndNanoseconds(microseconds / microSecondsInSeconds,
                                         (microseconds % microSecondsInSeconds) * nanoSecondsInMicroSeconds);
+}
+
+static bool shouldExit = false;
+
+#if _WIN32
+BOOL WINAPI signal_callback_handler(_In_ DWORD ctrlType)
+{
+    enum CtrlSignal event;
+    switch (ctrlType)
+    {
+    case CTRL_C_EVENT:
+        shouldExit = true;
+        return TRUE;
+    default:
+        break;
+    }
+    return FALSE;
+}
+#else
+void signal_callback_handler(int signalNumber)
+{
+    switch (signalNumber)
+    {
+    case SIGINT:
+    case SIGHUP:
+        shouldExit = true;
+        break;
+    default:
+        break;
+    }
+}
+#endif
+
+bool applicationShouldExit()
+{
+    static bool signalHandlerSet = false;
+    if (!signalHandlerSet)
+    {
+#if _WIN32
+        SetConsoleCtrlHandler(signal_callback_handler, TRUE);
+#else
+        struct sigaction action;
+        action.sa_handler = signal_callback_handler;
+        sigemptyset(&action.sa_mask);
+        action.sa_flags = 0;
+        sigaction(SIGINT, &action, NULL);
+        sigaction(SIGHUP, &action, NULL);
+#endif
+        signalHandlerSet = true;
+    }
+
+    return shouldExit;
 }
 // End Other
 

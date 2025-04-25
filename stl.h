@@ -191,7 +191,7 @@ extern "C"
     */
     // length: the number of characters in buffer
     // return: The number of characters written to buffer
-    API int32_t convertWebSocketKeyToAcceptKey(char *buffer, size_t length);
+    API int32_t convertWebSocketKeyToAcceptKey(unsigned char *buffer, size_t length);
     // <- End Network
 
     // -> Start Random
@@ -231,6 +231,9 @@ extern "C"
     // microseconds: the number of seconds to wait
     // return: True if waited the specified duration
     API bool sleepInMicroseconds(size_t microseconds);
+
+    // return: True if a signal to close the application was received
+    API bool applicationShouldExit();
     // <- End Other
 
 #ifdef __cplusplus
