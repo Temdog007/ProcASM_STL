@@ -1,7 +1,8 @@
 #if _WIN32
-#include <Windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
+#include <Windows.h>
 
 #include <afunix.h>
 #undef min
@@ -539,7 +540,13 @@ enum SocketState
 
 static inline enum SocketState socketReady(SOCKET sockfd, size_t timeout, int flag)
 {
-    const int errors = POLLERR | POLLNVAL | POLLPRI | POLLHUP | POLLRDHUP;
+    const int errors = POLLERR | POLLNVAL | POLLPRI | POLLHUP |
+#if _WIN32
+                       0
+#else
+                       POLLRDHUP
+#endif
+        ;
 
     struct pollfd pfd;
     memset(&pfd, 0, sizeof(pfd));
@@ -779,7 +786,6 @@ static bool shouldExit = false;
 #if _WIN32
 BOOL WINAPI signal_callback_handler(_In_ DWORD ctrlType)
 {
-    enum CtrlSignal event;
     switch (ctrlType)
     {
     case CTRL_C_EVENT:
