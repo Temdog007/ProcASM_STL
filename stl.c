@@ -4,6 +4,8 @@
 
 #include <Windows.h>
 
+WSADATA wsaData;
+
 #include <afunix.h>
 #undef min
 #undef max
@@ -383,6 +385,19 @@ static inline void closeActualSocket(SOCKET sockfd)
 
 static inline void *openIpSocket(const char *ip, size_t length, uint16_t port, bool isClient)
 {
+#if _WIN32
+    static bool initialized = false;
+    if (!initialized)
+    {
+        int error = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (error != 0)
+        {
+            return NULL;
+        }
+        initialized = true;
+    }
+#endif
+
     char ipAddress[256];
     snprintf(ipAddress, sizeof(ipAddress), "%.*s", (int32_t)(length), ip);
 
@@ -790,6 +805,7 @@ BOOL WINAPI signal_callback_handler(_In_ DWORD ctrlType)
     {
     case CTRL_C_EVENT:
         shouldExit = true;
+        WSACleanup();
         return TRUE;
     default:
         break;
