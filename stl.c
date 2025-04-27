@@ -803,7 +803,6 @@ BOOL WINAPI signal_callback_handler(_In_ DWORD ctrlType)
     {
     case CTRL_C_EVENT:
         shouldExit = true;
-        WSACleanup();
         return TRUE;
     default:
         break;
