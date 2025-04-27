@@ -599,6 +599,13 @@ static inline enum SocketState socketReadyToRead(SOCKET sockfd, size_t timeout)
     return socketReady(sockfd, timeout, POLLIN | POLLHUP);
 }
 
+bool socketIsOpen(void *ptr)
+{
+    size_t addr = (size_t)(ptr);
+    SOCKET sockfd = (SOCKET)(addr);
+    return socketReady(sockfd, 0, 0) != SocketState_Error;
+}
+
 void *acceptClient(void *ptr, size_t timeout)
 {
     size_t addr = (size_t)(ptr);

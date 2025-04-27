@@ -144,6 +144,10 @@ extern "C"
         void *
         openDomainClient(const char *ip, size_t length);
 
+    // socket: the socket
+    // return: true if the socket is NOT closed
+    API bool socketIsOpen(void *socket);
+
     // socket: the server socket
     // timeoutInMilliseconds: the length to wait for a new client in milliseconds
     // return: the newly created socket for the connected client
