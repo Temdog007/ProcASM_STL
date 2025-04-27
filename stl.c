@@ -587,7 +587,7 @@ static inline enum SocketState socketReady(SOCKET sockfd, size_t timeout, int fl
 
 static inline enum SocketState socketReadyToRead(SOCKET sockfd, size_t timeout)
 {
-    return socketReady(sockfd, timeout, POLLIN | POLLHUP);
+    return socketReady(sockfd, timeout, POLLIN);
 }
 
 bool socketIsOpen(void *ptr)
