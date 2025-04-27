@@ -555,13 +555,11 @@ enum SocketState
 
 static inline enum SocketState socketReady(SOCKET sockfd, size_t timeout, int flag)
 {
-    const int errors = POLLERR | POLLNVAL | POLLPRI | POLLHUP |
 #if _WIN32
-                       0
+    const int errors = 0;
 #else
-                       POLLRDHUP
+    const int errors = POLLERR | POLLNVAL | POLLPRI | POLLHUP | POLLRDHUP;
 #endif
-        ;
 
     struct pollfd pfd;
     memset(&pfd, 0, sizeof(pfd));
@@ -580,7 +578,9 @@ static inline enum SocketState socketReady(SOCKET sockfd, size_t timeout, int fl
         char buffer[1024];
         FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, GetLastError(),
                        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buffer, sizeof(buffer), NULL);
-        fprintf(stderr, "%s\n", buffer);
+        fprintf(stderr, "Poll Error: %s\n", buffer);
+#else
+        fprintf(stderr, "Poll Error: %s\n", strerror(errno));
 #endif
         return SocketState_Error;
     }
