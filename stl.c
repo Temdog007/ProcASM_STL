@@ -576,6 +576,12 @@ static inline enum SocketState socketReady(SOCKET sockfd, size_t timeout, int fl
 
     if (events < 0)
     {
+#if _WIN32
+        char buffer[1024];
+        FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, GetLastError(),
+                       MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buffer, sizeof(buffer), NULL);
+        fprintf(stderr, "%s\n", buffer);
+#endif
         return SocketState_Error;
     }
     if (events == 0)
