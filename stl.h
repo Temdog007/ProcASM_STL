@@ -1,7 +1,9 @@
+#ifndef PROCASM_STL
+#define PROCASM_STL
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <uchar.h>
 
 #if _WIN32
 #define API __declspec(dllexport)
@@ -13,54 +15,6 @@
 extern "C"
 {
 #endif
-
-    // -> Start Printing
-
-    // buffer: list of ASCII characters
-    // length: number of ASCII characters in list
-    // return: number of ASCII characters printed
-    API int32_t printAscii(const char *buffer, int32_t length);
-
-    // buffer: list of ASCII characters
-    // length: number of ASCII characters in list
-    // return: number of UTF32 characters printed
-    API int32_t printUTF32(const char32_t *buffer, size_t length);
-    // <- End Printing
-
-    // -> Start Convert
-
-    // buffer: the resulting UTF8 character converted from the UTF32 character
-    // code: the UTF32 character
-    // return: size of the converted UTF8 character
-    API size_t convertUTF32toUTF8(uint8_t *const buffer, const unsigned int code);
-
-    // buffer: the UTF8 character
-    // length: output parameter; the size of the UTF8 character
-    // return: the UTF32 character converted from the UTF8 character
-    API char32_t convertUTF8toUTF32(const uint8_t *buffer, size_t *length);
-
-    // buffer: the UTF8 character
-    // return: the size of the UTF8 character
-    API size_t validUTF8(const uint8_t *buffer);
-
-    // buffer: the UTF8 character
-    // return: the size of the UTF8 character
-    API size_t utf8Length(uint8_t character);
-
-    // output: the UTF8 buffer to contain the conversion from UTF32
-    // outputLength: the number of bytes in output
-    // input: list of UTF32 characters to convert
-    // inputLength: number of UTF32 characters to convert
-    // return: the number of bytes written in output
-    API size_t convertUTF32toUTF8List(void *output, size_t outputLength, const char32_t *input, size_t inputLength);
-
-    // output: the UTF32 buffer to contain the conversion from UTF8
-    // outputLength: the number of UTF32 characters in output
-    // input: list of UTF8 characters to convert
-    // inputLength: number of bytes in input
-    // return: the number of UTF32 characters written in output
-    API size_t convertUTF8toUTF32List(char32_t *output, size_t outputLength, const void *input, size_t inputLength);
-    // <- End Convert
 
     // -> Start File
 
@@ -109,7 +63,7 @@ extern "C"
     // buffer: the buffer that contains the contents to write to the file
     // length: number of bytes in buffer
     // return: the number of bytes appended to the file
-    API size_t appendBinaryToFile(const char *filename, size_t filenameLength, const uint8_t *, size_t);
+    API size_t appendBinaryToFile(const char *filename, size_t filenameLength, const uint8_t *buffer, size_t length);
     // <- End File
 
     // -> Start Network
@@ -183,12 +137,6 @@ extern "C"
     */
     API int32_t sendThroughSocket(void *socket, const void *buffer, size_t length);
 
-    // socket: the socket to send data to
-    // buffer: the buffer that contains the data to write to the socket
-    // length: the number of bytes in buffer
-    // return: True if all data was sent without an error
-    API bool sendAllThroughSocket(void *socket, const void *buffer, size_t length);
-
     /*
         buffer: the buffer that contains the client's Sec-WebSocket-Key concatenated
                 with the magic string '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
@@ -205,41 +153,11 @@ extern "C"
     API int32_t getRandomNumber();
     // <-> End Random
 
-    // -> Start Other
-
-    // key: the environment variable's key
-    // keyLength: the number of characters in key
-    // buffer: the buffer to contain the environment variable's value
-    // bufferLength: the number of characters in buffer
-    // return: the number of characters written to buffer
-    API int32_t readEnvironmentVariable(const char *key, size_t keyLength, char *buffer, size_t bufferLength);
-
-    // seconds: output parameter; the seconds porition of the timstamp
-    // nanoseconds: output parameter; the nanoseconds porition of the timstamp
-    // return: True if the timestamp was acquired
-    API bool getTimeSinceEpooch(size_t *seconds, size_t *nanoseconds);
-
-    // seconds: the number of seconds to wait
-    // nanoseconds: the number of nanoseconds to wait
-    // return: True if waited the specified duration
-    API bool sleepInSecondsAndNanoseconds(size_t seconds, size_t nanoseconds);
-
-    // seconds: the number of seconds to wait
-    // return: True if waited the specified duration
-    API bool sleepInSeconds(size_t seconds);
-
-    // milliseconds: the number of seconds to wait
-    // return: True if waited the specified duration
-    API bool sleepInMilliseconds(size_t milliseconds);
-
-    // microseconds: the number of seconds to wait
-    // return: True if waited the specified duration
-    API bool sleepInMicroseconds(size_t microseconds);
-
     // return: True if a signal to close the application was received
     API bool applicationShouldExit();
-    // <- End Other
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif
